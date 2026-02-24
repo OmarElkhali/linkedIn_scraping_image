@@ -1,0 +1,15 @@
+# LinkedIn Scraper — dépendances Python
+# Installez avec : pip install -r requirements.txt
+
+# Interface utilisateur
+streamlit>=1.35.0
+
+# Scraping web
+scrapling>=0.2.0
+
+# Reconnaissance faciale (optionnel — requis pour l'onglet "Recherche par Visage")
+# Nécessite cmake et les dépendances système dlib.
+# Sur Ubuntu/Debian : sudo apt-get install cmake build-essential
+face_recognition>=1.3.0
+numpy>=1.24.0
+Pillow>=10.0.0
