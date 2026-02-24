@@ -25,7 +25,7 @@ FACE_MATCH_TOLERANCE: float = float(os.environ.get("FACE_MATCH_TOLERANCE", "0.55
 
 # Nombre maximum de profils récupérés avant la comparaison de visages
 MAX_PROFILES_FOR_FACE_SEARCH: int = int(
-    os.environ.get("MAX_PROFILES_FOR_FACE_SEARCH", "20")
+    os.environ.get("MAX_PROFILES_FOR_FACE_SEARCH", "4000")
 )
 
 # ---------------------------------------------------------------------------

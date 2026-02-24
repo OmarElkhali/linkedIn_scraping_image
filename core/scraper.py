@@ -66,50 +66,80 @@ def search_linkedin_profiles(
             "Valeurs acceptées : 'nom_prenom', 'profession', 'image'."
         )
 
-    google_url = (
-        f"https://www.google.com/search?q={quote_plus(query)}&num={max_results}"
-    )
-
     if progress_callback:
         progress_callback(f"🔍 Recherche Google : {query}")
 
-    page = StealthyFetcher.fetch(
-        google_url,
-        headless=True,
-        network_idle=True,
-        google_search=False,
-    )
-
     profiles: list[dict] = []
-    results = page.css("div.g") or page.css("[data-hveid]")
+    seen_urls: set[str] = set()
+    page_size = 100  # Google max par page
+    start = 0
 
-    for result in results:
-        link_el = result.css("a")
-        if not link_el:
-            continue
-        href: str = link_el[0].attrib.get("href", "")
-        if "linkedin.com/in/" not in href:
-            continue
-
-        title: str = result.css("h3::text").get() or ""
-        snippet: str = (
-            result.css(".VwiC3b::text").get()
-            or result.css("[data-sncf]::text").get()
-            or ""
+    while len(profiles) < max_results:
+        batch = min(page_size, max_results - len(profiles))
+        google_url = (
+            f"https://www.google.com/search?"
+            f"q={quote_plus(query)}&num={batch}&start={start}"
         )
 
-        profiles.append(
-            {
-                "url": href,
-                "name": (
-                    title.replace(" | LinkedIn", "").replace(" - LinkedIn", "").strip()
-                ),
-                "snippet": snippet.strip(),
-                "company_or_school": company_or_school,
-            }
-        )
+        if progress_callback:
+            progress_callback(
+                f"📄 Page {start // page_size + 1} — {len(profiles)}/{max_results} profils collectés"
+            )
 
-    time.sleep(REQUEST_DELAY)
+        try:
+            page = StealthyFetcher.fetch(
+                google_url,
+                headless=True,
+                network_idle=True,
+                google_search=False,
+            )
+        except Exception as exc:
+            if progress_callback:
+                progress_callback(f"⚠️ Erreur page {start}: {exc}")
+            break
+
+        results = page.css("div.g") or page.css("[data-hveid]")
+        if not results:
+            break  # Plus de résultats Google
+
+        found_new = False
+        for result in results:
+            link_el = result.css("a")
+            if not link_el:
+                continue
+            href: str = link_el[0].attrib.get("href", "")
+            if "linkedin.com/in/" not in href or href in seen_urls:
+                continue
+
+            seen_urls.add(href)
+            found_new = True
+            title: str = result.css("h3::text").get() or ""
+            snippet: str = (
+                result.css(".VwiC3b::text").get()
+                or result.css("[data-sncf]::text").get()
+                or ""
+            )
+            profiles.append(
+                {
+                    "url": href,
+                    "name": (
+                        title.replace(" | LinkedIn", "")
+                        .replace(" - LinkedIn", "")
+                        .strip()
+                    ),
+                    "snippet": snippet.strip(),
+                    "company_or_school": company_or_school,
+                }
+            )
+            if len(profiles) >= max_results:
+                break
+
+        if not found_new:
+            break  # Google ne retourne plus de nouveaux profils LinkedIn
+
+        start += page_size
+        time.sleep(REQUEST_DELAY)
+
     return profiles
 
 
