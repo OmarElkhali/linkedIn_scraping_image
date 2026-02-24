@@ -5,7 +5,13 @@
 streamlit>=1.35.0
 
 # Scraping web
-scrapling>=0.2.0
+scrapling[all]>=0.2.0
+
+# Moteurs de navigation furtifs (requis par scrapling)
+patchright>=1.49.0
+camoufox[geoip]>=0.4.0
+curl_cffi>=0.7.0
+playwright>=1.40.0
 
 # Reconnaissance faciale (optionnel — requis pour l'onglet "Recherche par Visage")
 # Nécessite cmake et les dépendances système dlib.
@@ -13,3 +19,7 @@ scrapling>=0.2.0
 face_recognition>=1.3.0
 numpy>=1.24.0
 Pillow>=10.0.0
+
+# Post-installation : télécharger les navigateurs
+# python3 -m patchright install chromium
+# python3 -m camoufox fetch
