@@ -14,6 +14,15 @@ The project is intentionally designed as a multi-phase framework:
 - **Phase 2 (Planned):** biometric indexing and controlled face similarity search.
 - **Phase 3 (Planned):** intelligence enrichment, scoring, analytics dashboards, and API automation.
 
+## Open-Source Baseline
+
+This repository includes open-source governance and quality foundations:
+- [LICENSE](LICENSE)
+- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- [SECURITY.md](SECURITY.md)
+- CI workflow: [.github/workflows/ci.yml](.github/workflows/ci.yml)
+
 ---
 
 ## Why this project
@@ -98,6 +107,13 @@ pip install -U pip
 pip install -r requirements-phase1.txt
 ```
 
+### Install as package (optional)
+
+```bash
+pip install -e .
+phase1-run --help
+```
+
 ### Low disk space fix (`/tmp` full)
 
 If `pip` fails with `OSError: [Errno 28] No space left on device`, use a temp folder on your home partition:
@@ -179,6 +195,14 @@ This repository is intended for educational/research and lawful OSINT workflows.
 - Dataset quality scoring and validation reports
 - Containerized execution (`Dockerfile`, `compose`)
 - CI checks (lint/test/secret scanning)
+
+## Development & Tests
+
+```bash
+pip install -e .[dev]
+python -m py_compile core/alumni_osint_pipeline.py run_phase1_pipeline.py core/linkedin_scraper.py
+pytest
+```
 
 ---
 
