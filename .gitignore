@@ -13,6 +13,13 @@ env/
 # Output / downloaded images
 output/
 
+# Phase 1 generated artifacts
+profiles_metadata.json
+data/*
+!data/.gitkeep
+high_res_images/*
+!high_res_images/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db

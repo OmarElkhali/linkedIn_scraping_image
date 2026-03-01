@@ -1,37 +1,21 @@
 """
-Configuration centralisée de l'application.
-
-Toutes les constantes réglables sont regroupées ici pour faciliter
-la maintenance et la personnalisation sans toucher au code métier.
+Configuration — LinkedIn Photo Scraper v3.
+Toutes les constantes modifiables ici.
 """
-
 import os
 
-# ---------------------------------------------------------------------------
-# Dossiers de sortie
-# ---------------------------------------------------------------------------
+# Dossier racine des sorties
 OUTPUT_DIR: str = os.environ.get("OUTPUT_DIR", "output")
-IMAGES_DIR: str = os.path.join(OUTPUT_DIR, "profile_images")
 
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(IMAGES_DIR, exist_ok=True)
+# Tolérance reconnaissance faciale (0.4 = strict, 0.6 = souple)
+FACE_TOLERANCE: float = float(os.environ.get("FACE_TOLERANCE", "0.50"))
 
-# ---------------------------------------------------------------------------
-# Reconnaissance faciale
-# ---------------------------------------------------------------------------
-# Tolérance de distance : plus la valeur est basse, plus la comparaison
-# est stricte.  Valeur recommandée : entre 0.45 et 0.60.
-FACE_MATCH_TOLERANCE: float = float(os.environ.get("FACE_MATCH_TOLERANCE", "0.55"))
+# Délai (s) entre scrolls pour éviter le rate-limit LinkedIn
+SCROLL_DELAY: float  = float(os.environ.get("SCROLL_DELAY", "1.5"))
 
-# Nombre maximum de profils récupérés avant la comparaison de visages
-MAX_PROFILES_FOR_FACE_SEARCH: int = int(
-    os.environ.get("MAX_PROFILES_FOR_FACE_SEARCH", "20")
-)
+# Timeout page Playwright (ms)
+PAGE_TIMEOUT: int = int(os.environ.get("PAGE_TIMEOUT", "45000"))
 
-# ---------------------------------------------------------------------------
-# LinkedIn / Google
-# ---------------------------------------------------------------------------
-LINKEDIN_BASE_URL: str = "https://www.linkedin.com"
-
-# Délai (secondes) entre deux requêtes pour éviter le rate-limiting
-REQUEST_DELAY: float = float(os.environ.get("REQUEST_DELAY", "1.5"))
+# Viewport du navigateur headless
+VIEWPORT_W: int = 1280
+VIEWPORT_H: int = 900

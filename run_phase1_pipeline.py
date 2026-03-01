@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.alumni_osint_pipeline import AlumniOSINTPipeline
 
@@ -73,7 +73,7 @@ def main() -> int:
     os.makedirs(args.data_dir, exist_ok=True)
     os.makedirs(args.images_dir, exist_ok=True)
 
-    started = datetime.utcnow().isoformat() + "Z"
+    started = datetime.now(timezone.utc).isoformat()
     print(f"🚀 Phase 1 pipeline started at {started}")
     print(f"   Target      : {args.entity_url}")
     print(f"   Max profiles: {args.max_profiles}")

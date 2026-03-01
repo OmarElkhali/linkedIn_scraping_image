@@ -1,431 +1,357 @@
 """
-LinkedIn Scraper — Interface Streamlit.
+LinkedIn Photo Scraper — Interface Streamlit v3.
 
-Lancement
----------
-    streamlit run app.py
-
-Fonctionnalités
----------------
-- **Onglet 1 — Recherche par Nom** : trouve les profils LinkedIn correspondant
-  à un nom/prénom au sein d'une entreprise ou école.
-- **Onglet 2 — Recherche par Profession** : trouve les profils LinkedIn
-  correspondant à un intitulé de poste au sein d'une entreprise ou école.
-- **Onglet 3 — Recherche par Visage** : télécharge une photo de référence,
-  parcourt les profils trouvés et identifie la personne par reconnaissance
-  faciale.
+Deux onglets :
+  🎓 Collecte  → scrape les photos de tous les membres d'une école / entreprise.
+  🔍 Visage    → retrouve un profil LinkedIn depuis une photo (reverse face search).
 """
-
 from __future__ import annotations
 
+import csv
+import io
 import os
-import tempfile
+import re
+import time
+import zipfile
 
 import streamlit as st
 
-from core.config import FACE_MATCH_TOLERANCE, MAX_PROFILES_FOR_FACE_SEARCH
-from core.face_comparator import FACE_RECOGNITION_AVAILABLE, FaceComparator
-from core.scraper import scrape_linkedin_profile, search_linkedin_profiles
-from scrapling.fetchers import Fetcher
+from core.linkedin_scraper import LinkedInScraper
+from core.face_index import FaceIndex, FACE_RECOGNITION_AVAILABLE
+from core.config import OUTPUT_DIR, FACE_TOLERANCE
 
-# ---------------------------------------------------------------------------
-# Configuration de la page Streamlit
-# ---------------------------------------------------------------------------
+# ─── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="LinkedIn Scraper",
+    page_title="LinkedIn Photo Scraper",
     page_icon="🔍",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-# ---------------------------------------------------------------------------
-# CSS personnalisé
-# ---------------------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    .main-title {
-        font-size: 2.4rem;
-        font-weight: 700;
-        color: #0A66C2;
-        margin-bottom: 0.2rem;
-    }
-    .sub-title {
-        font-size: 1rem;
-        color: #666;
-        margin-bottom: 1.5rem;
-    }
-    .profile-card {
-        background: #f9fafb;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 1.2rem 1.4rem;
-        margin-bottom: 1rem;
-    }
-    .profile-card:hover {
-        box-shadow: 0 4px 16px rgba(10, 102, 194, 0.12);
-    }
-    .profile-name {
-        font-size: 1.1rem;
-        font-weight: 600;
-        color: #0A66C2;
-    }
-    .profile-meta {
-        font-size: 0.85rem;
-        color: #555;
-        margin-top: 0.3rem;
-    }
-    .match-badge {
-        display: inline-block;
-        background: #16a34a;
-        color: white;
-        border-radius: 6px;
-        padding: 2px 10px;
-        font-size: 0.8rem;
-        font-weight: 600;
-        margin-left: 8px;
-    }
-    .no-match-badge {
-        display: inline-block;
-        background: #dc2626;
-        color: white;
-        border-radius: 6px;
-        padding: 2px 10px;
-        font-size: 0.8rem;
-        font-weight: 600;
-        margin-left: 8px;
-    }
-    .stProgress > div > div > div { background-color: #0A66C2; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# ─── CSS ──────────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+body,[data-testid="stApp"]{background:#0f172a;color:#e2e8f0}
+[data-testid="stSidebar"]{background:#1e293b}
+h1,h2,h3{color:#f1f5f9}
+.stTabs [data-baseweb="tab"]{color:#94a3b8;font-size:.95rem}
+.stTabs [aria-selected="true"]{color:#60a5fa;border-bottom:2px solid #60a5fa}
+.sec{font-size:1.3rem;font-weight:700;color:#60a5fa;margin:1rem 0 .5rem}
+.chips{display:flex;gap:10px;flex-wrap:wrap;margin:.6rem 0}
+.chip{background:#1e293b;border:1px solid #334155;border-radius:9px;
+      padding:10px 16px;min-width:90px;text-align:center}
+.chip .v{font-size:1.5rem;font-weight:700;color:#60a5fa}
+.chip .l{font-size:.7rem;color:#94a3b8;margin-top:2px}
+.card{background:#1e293b;border:1px solid #334155;border-radius:12px;
+      padding:12px 16px;margin:6px 0;display:flex;gap:12px;align-items:center}
+.card img{width:52px;height:52px;border-radius:50%;object-fit:cover;border:2px solid #334155}
+.card .nm{font-weight:700;font-size:.95rem;color:#f1f5f9}
+.card .ti{font-size:.82rem;color:#94a3b8}
+.card a{font-size:.78rem;color:#60a5fa;text-decoration:none}
+.ok{border-color:#16a34a}
+.tip{background:#1e3a5f;border:1px solid #1d4ed8;border-radius:8px;
+     padding:10px 14px;font-size:.85rem;margin:.5rem 0;color:#bfdbfe}
+.warn{background:#422006;border:1px solid #92400e;border-radius:8px;
+      padding:10px 14px;font-size:.85rem;margin:.5rem 0;color:#fed7aa}
+</style>
+""", unsafe_allow_html=True)
 
-# ---------------------------------------------------------------------------
-# En-tête
-# ---------------------------------------------------------------------------
-st.markdown(
-    '<p class="main-title">🔍 LinkedIn Scraper</p>'
-    '<p class="sub-title">Recherchez des profils LinkedIn par nom, profession ou photo.</p>',
-    unsafe_allow_html=True,
-)
+# ─── Session state ─────────────────────────────────────────────────────────────
+for k, v in {
+    "profiles":    [],
+    "collect_dir": "",
+    "entity_url":  "",
+    "index_path":  "",
+}.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ─── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## ⚙️ Paramètres")
+    face_tol = st.slider(
+        "Tolérance faciale",
+        min_value=0.30, max_value=0.70, value=FACE_TOLERANCE, step=0.01,
+        help="0.4 = strict · 0.6 = souple",
+    )
+    top_k = st.slider("Résultats top-K", 1, 20, 5)
+    st.markdown("---")
+    st.markdown(
+        "**Comment obtenir `li_at` ?**\n\n"
+        "1. Connectez-vous sur LinkedIn\n"
+        "2. F12 → Application → Cookies → `https://www.linkedin.com`\n"
+        "3. Copiez la valeur du cookie **`li_at`**",
+    )
+
+# ─── Tabs ─────────────────────────────────────────────────────────────────────
+tab_collect, tab_face = st.tabs(["🎓 Collecte de photos", "🔍 Recherche par visage"])
 
 
-# ---------------------------------------------------------------------------
-# Fonction utilitaire : rendu d'une carte profil
-# ---------------------------------------------------------------------------
-def _render_profile_card(profile: dict, face_result: dict | None = None) -> None:
-    """Affiche une carte profil dans l'interface Streamlit.
-
-    Parameters
-    ----------
-    profile:
-        Dictionnaire de profil issu de ``search_linkedin_profiles`` ou
-        ``scrape_linkedin_profile``.
-    face_result:
-        Résultat optionnel de la comparaison faciale avec les clés
-        ``match`` (bool), ``confidence`` (float) et ``error`` (str|None).
-    """
-    name = profile.get("nom_complet") or profile.get("name") or "—"
-    title = profile.get("titre_professionnel") or profile.get("snippet") or ""
-    location = profile.get("localisation", "")
-    url = profile.get("url", "#")
-    company = profile.get("entreprise_actuelle") or profile.get("company_or_school", "")
-
-    badge = ""
-    if face_result is not None:
-        conf = face_result.get("confidence", 0.0)
-        if face_result.get("match"):
-            badge = f'<span class="match-badge">✅ Match {conf:.1f}%</span>'
-        else:
-            badge = f'<span class="no-match-badge">❌ {conf:.1f}%</span>'
-
-    meta_parts = [p for p in [title, company, location] if p]
-    meta_html = " · ".join(meta_parts)
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET 1 — COLLECTE
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_collect:
+    st.markdown('<div class="sec">🎓 Collecte de photos LinkedIn</div>', unsafe_allow_html=True)
 
     st.markdown(
-        f"""
-        <div class="profile-card">
-            <span class="profile-name">
-                <a href="{url}" target="_blank"
-                   style="text-decoration:none;color:#0A66C2;">{name}</a>
-            </span>{badge}
-            <div class="profile-meta">{meta_html}</div>
-        </div>
-        """,
+        '<div class="tip">💡 Accès direct à la page <code>/people/</code> de l\'école '
+        'ou entreprise via votre session LinkedIn. Aucune limite Google.</div>',
         unsafe_allow_html=True,
     )
 
-
-# ---------------------------------------------------------------------------
-# Barre latérale — paramètres globaux
-# ---------------------------------------------------------------------------
-with st.sidebar:
-    st.header("⚙️ Paramètres")
-    max_results = st.slider(
-        "Nombre max de résultats",
-        min_value=3,
-        max_value=50,
-        value=10,
-        step=1,
-        help="Nombre de résultats Google à analyser.",
-    )
-    tolerance = st.slider(
-        "Tolérance reconnaissance faciale",
-        min_value=0.30,
-        max_value=0.80,
-        value=FACE_MATCH_TOLERANCE,
-        step=0.05,
-        format="%.2f",
-        help=(
-            "Distance maximale entre deux encodages pour considérer deux "
-            "visages identiques. Plus la valeur est basse, plus la "
-            "comparaison est stricte."
-        ),
-    )
-    st.markdown("---")
-    st.markdown(
-        "**Aide**\n\n"
-        "- 🏢 *Entreprise / École* : entité cible\n"
-        "- 👤 *Nom/Prénom* : identité de la personne\n"
-        "- 💼 *Profession* : intitulé de poste\n"
-        "- 📷 *Photo* : référence pour la reconnaissance faciale\n"
-    )
-
-# ---------------------------------------------------------------------------
-# Onglets principaux
-# ---------------------------------------------------------------------------
-tab_name, tab_job, tab_face = st.tabs(
-    ["👤 Recherche par Nom", "💼 Recherche par Profession", "📷 Recherche par Visage"]
-)
-
-# ============================================================
-# Onglet 1 — Recherche par Nom
-# ============================================================
-with tab_name:
-    st.subheader("Recherche par Nom / Prénom")
-    col1, col2 = st.columns(2)
-    with col1:
-        company_name = st.text_input(
-            "🏢 Entreprise ou École",
-            placeholder="ex. Google",
-            key="name_company",
+    # ── Formulaire ────────────────────────────────────────────────────────────
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        entity_url = st.text_input(
+            "🔗 URL LinkedIn",
+            value="https://www.linkedin.com/school/ensam-casablanca/",
+            help="URL école : .../school/slug/  |  URL entreprise : .../company/slug/",
+            key="in_url",
         )
-    with col2:
-        person_name = st.text_input(
-            "👤 Nom / Prénom",
-            placeholder="ex. John Doe",
-            key="name_person",
+    with c2:
+        max_p = st.number_input("Max profils", 10, 10000, 200, 50, key="in_max")
+
+    li_at = st.text_input(
+        "🍪 Cookie li_at",
+        type="password",
+        placeholder="AQEDATs4…",
+        key="in_li_at",
+        help="Votre cookie de session LinkedIn (voir sidebar).",
+    )
+
+    slug = re.sub(r"[^\w\-]", "_", entity_url.rstrip("/").split("/")[-1] or "entity")[:40]
+    default_dir = os.path.join(OUTPUT_DIR, slug)
+    out_dir = st.text_input("📂 Dossier de sortie", value=default_dir, key="in_out")
+
+    if max_p > 300:
+        eta = round(max_p * 3 / 60)
+        st.markdown(
+            f'<div class="warn">⏱️ ~{eta} min estimées pour {max_p} profils.</div>',
+            unsafe_allow_html=True,
         )
 
-    if st.button("🔎 Rechercher", key="btn_name"):
-        if not company_name or not person_name:
-            st.warning("Veuillez renseigner l'entreprise/école et le nom.")
+    go = st.button("🚀 Lancer la collecte", type="primary", key="btn_go")
+
+    if go:
+        if not li_at:
+            st.error("❌ Cookie li_at requis.")
+        elif not entity_url:
+            st.warning("Renseignez l'URL LinkedIn.")
         else:
-            log_area = st.empty()
-            progress_bar = st.progress(0, text="Initialisation…")
+            prog  = st.progress(0, text="Connexion…")
+            stats = st.empty()
+            log   = st.empty()
+            msgs: list[str] = []
 
-            with st.spinner("Recherche en cours…"):
-                try:
-                    profiles = search_linkedin_profiles(
-                        company_or_school=company_name,
-                        search_type="nom_prenom",
-                        search_value=person_name,
-                        max_results=max_results,
-                        progress_callback=lambda msg: log_area.info(msg),
-                    )
-                except Exception as exc:
-                    st.error(f"Erreur lors de la recherche : {exc}")
-                    profiles = []
+            def cb(msg: str) -> None:
+                msgs.append(msg)
+                log.info(msgs[-1])
 
-            progress_bar.progress(100, text="Terminé")
-            log_area.empty()
+            prog.progress(5, text="Initialisation du navigateur…")
 
-            if not profiles:
-                st.info("Aucun profil trouvé. Essayez d'affiner votre recherche.")
-            else:
-                st.success(f"✅ {len(profiles)} profil(s) trouvé(s).")
+            scraper = LinkedInScraper(
+                li_at        = li_at,
+                output_dir   = out_dir,
+                max_profiles = int(max_p),
+                on_progress  = cb,
+            )
+
+            t0 = time.time()
+            profiles = scraper.scrape(entity_url)
+            elapsed  = time.time() - t0
+
+            prog.progress(100, text=f"✅ Terminé en {elapsed:.0f}s")
+            log.empty()
+
+            n_ok  = sum(1 for p in profiles if p.photo_path)
+            n_err = len(profiles) - n_ok
+
+            stats.markdown(
+                f'<div class="chips">'
+                f'<div class="chip"><div class="v">{len(profiles)}</div><div class="l">Profils</div></div>'
+                f'<div class="chip"><div class="v" style="color:#4ade80">{n_ok}</div><div class="l">Photos</div></div>'
+                f'<div class="chip"><div class="v" style="color:#f87171">{n_err}</div><div class="l">Sans photo</div></div>'
+                f'<div class="chip"><div class="v">{round(n_ok/len(profiles)*100) if profiles else 0}%</div><div class="l">Couverture</div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+            raw = [p.to_dict() for p in profiles]
+            st.session_state["profiles"]    = raw
+            st.session_state["collect_dir"] = out_dir
+            st.session_state["entity_url"]  = entity_url
+            st.session_state["index_path"]  = os.path.join(out_dir, "face_index.pkl")
+
+    # ── Résultats ─────────────────────────────────────────────────────────────
+    profiles = st.session_state.get("profiles", [])
+    saved_dir = st.session_state.get("collect_dir", "")
+
+    if profiles:
+        n_ok = sum(1 for p in profiles if p.get("photo_path"))
+        st.success(f"✅ {n_ok} photos dans `{saved_dir}`")
+
+        # ── Exports ───────────────────────────────────────────────────────────
+        ea, eb, ec, _ = st.columns([1, 1, 1.5, 3])
+
+        with ea:
+            csv_buf = io.StringIO()
+            wr = csv.DictWriter(csv_buf, fieldnames=list(profiles[0].keys()), extrasaction="ignore")
+            wr.writeheader(); wr.writerows(profiles)
+            st.download_button("⬇️ CSV", csv_buf.getvalue(),
+                               file_name=f"{slug}.csv", mime="text/csv", key="dl_csv")
+
+        with eb:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for p in profiles:
-                    _render_profile_card(p)
+                    pp = p.get("photo_path", "")
+                    if pp and os.path.isfile(pp):
+                        zf.write(pp, os.path.basename(pp))
+            zip_buf.seek(0)
+            st.download_button("⬇️ ZIP photos", zip_buf.getvalue(),
+                               file_name=f"{slug}_photos.zip", mime="application/zip", key="dl_zip")
 
-# ============================================================
-# Onglet 2 — Recherche par Profession
-# ============================================================
-with tab_job:
-    st.subheader("Recherche par Profession / Poste")
-    col1, col2 = st.columns(2)
-    with col1:
-        company_job = st.text_input(
-            "🏢 Entreprise ou École",
-            placeholder="ex. Meta",
-            key="job_company",
-        )
-    with col2:
-        job_title = st.text_input(
-            "💼 Intitulé de poste",
-            placeholder="ex. Software Engineer",
-            key="job_title",
-        )
-
-    if st.button("🔎 Rechercher", key="btn_job"):
-        if not company_job or not job_title:
-            st.warning("Veuillez renseigner l'entreprise/école et l'intitulé de poste.")
-        else:
-            log_area_job = st.empty()
-            progress_bar_job = st.progress(0, text="Initialisation…")
-
-            with st.spinner("Recherche en cours…"):
-                try:
-                    profiles = search_linkedin_profiles(
-                        company_or_school=company_job,
-                        search_type="profession",
-                        search_value=job_title,
-                        max_results=max_results,
-                        progress_callback=lambda msg: log_area_job.info(msg),
-                    )
-                except Exception as exc:
-                    st.error(f"Erreur lors de la recherche : {exc}")
-                    profiles = []
-
-            progress_bar_job.progress(100, text="Terminé")
-            log_area_job.empty()
-
-            if not profiles:
-                st.info("Aucun profil trouvé. Essayez d'affiner votre recherche.")
+        with ec:
+            if FACE_RECOGNITION_AVAILABLE:
+                if st.button("🧠 Construire l'index facial", key="btn_index"):
+                    idx_path = st.session_state.get("index_path",
+                                os.path.join(saved_dir, "face_index.pkl"))
+                    idx = FaceIndex(idx_path)
+                    log2 = st.empty()
+                    n = idx.build(profiles, on_progress=lambda m: log2.info(m))
+                    log2.empty()
+                    st.success(f"🧠 Index : {n} visages indexés → `{idx_path}`")
             else:
-                st.success(f"✅ {len(profiles)} profil(s) trouvé(s).")
-                for p in profiles:
-                    _render_profile_card(p)
+                st.warning("face_recognition non installé")
 
-# ============================================================
-# Onglet 3 — Recherche par Visage
-# ============================================================
+        # ── Galerie ───────────────────────────────────────────────────────────
+        st.markdown('<div class="sec">🖼️ Galerie</div>', unsafe_allow_html=True)
+
+        ok_p = [p for p in profiles if p.get("photo_path") and os.path.isfile(p["photo_path"])]
+        COLS = 5
+        for i in range(0, len(ok_p), COLS):
+            row = ok_p[i:i+COLS]
+            cols = st.columns(COLS)
+            for col, p in zip(cols, row):
+                with col:
+                    try:
+                        st.image(p["photo_path"], use_container_width=True,
+                                 caption=f"{p.get('nom','')[:20]}")
+                    except Exception:
+                        st.markdown("👤")
+
+        # Profils sans photo
+        bad = [p for p in profiles if not p.get("photo_path")]
+        if bad:
+            with st.expander(f"⚠️ {len(bad)} profils sans photo"):
+                for p in bad:
+                    st.write(f"- [{p.get('nom') or p['url']}]({p['url']}) — {p.get('error','')}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONGLET 2 — RECHERCHE PAR VISAGE
+# ══════════════════════════════════════════════════════════════════════════════
 with tab_face:
-    st.subheader("Recherche par Reconnaissance Faciale")
+    st.markdown('<div class="sec">🔍 Recherche par visage → profil LinkedIn</div>', unsafe_allow_html=True)
 
     if not FACE_RECOGNITION_AVAILABLE:
         st.error(
-            "⚠️ La bibliothèque `face_recognition` n'est pas installée.\n\n"
-            "```bash\npip install face_recognition numpy Pillow\n```"
+            "❌ `face_recognition` n'est pas installé.\n\n"
+            "```bash\npip install face_recognition\n```"
         )
-    else:
-        col1, col2 = st.columns(2)
-        with col1:
-            company_face = st.text_input(
-                "🏢 Entreprise ou École",
-                placeholder="ex. Amazon",
-                key="face_company",
-            )
-        with col2:
-            uploaded_file = st.file_uploader(
-                "📷 Photo de référence",
-                type=["jpg", "jpeg", "png", "webp"],
-                key="face_upload",
-                help="Téléchargez une photo nette du visage à rechercher.",
-            )
+        st.stop()
 
-        if uploaded_file:
-            st.image(uploaded_file, caption="Photo de référence", width=160)
+    # ── Sélection de l'index ──────────────────────────────────────────────────
+    st.markdown('<div class="sec" style="font-size:1rem">Index facial</div>', unsafe_allow_html=True)
 
-        if st.button("🔎 Rechercher et comparer", key="btn_face"):
-            if not company_face:
-                st.warning("Veuillez renseigner l'entreprise/école.")
-            elif not uploaded_file:
-                st.warning("Veuillez télécharger une photo de référence.")
-            else:
-                log_area_face = st.empty()
-                progress_bar_face = st.progress(0, text="Initialisation…")
+    idx_default = st.session_state.get("index_path", "")
+    idx_path = st.text_input(
+        "Chemin vers l'index (.pkl)",
+        value=idx_default,
+        placeholder="output/ensam-casablanca/face_index.pkl",
+        key="in_idx_path",
+    )
 
-                # Sauvegarde temporaire de la photo source
-                with tempfile.NamedTemporaryFile(
-                    suffix=".jpg", delete=False
-                ) as tmp_src:
-                    tmp_src.write(uploaded_file.getvalue())
-                    src_path = tmp_src.name
+    # Charge l'index si existe
+    face_idx: FaceIndex | None = None
+    if idx_path and os.path.isfile(idx_path):
+        face_idx = FaceIndex(idx_path)
+        st.success(f"✅ Index chargé — {face_idx.size} visages")
+    elif idx_path:
+        st.warning("Index introuvable — lancez d'abord la collecte et construisez l'index.")
 
+    st.markdown("---")
+
+    # ── Upload photo cible ────────────────────────────────────────────────────
+    st.markdown('<div class="sec" style="font-size:1rem">Photo à rechercher</div>', unsafe_allow_html=True)
+
+    uploaded = st.file_uploader(
+        "Chargez une photo (JPG / PNG)",
+        type=["jpg", "jpeg", "png", "webp"],
+        key="up_face",
+    )
+
+    if uploaded and face_idx:
+        img_bytes = uploaded.read()
+
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.image(img_bytes, caption="Photo cible", width=160)
+
+        with c2:
+            with st.spinner("Analyse faciale…"):
                 try:
-                    comparator = FaceComparator(src_path, tolerance=tolerance)
-                except ValueError as exc:
-                    st.error(str(exc))
-                    os.unlink(src_path)
-                    st.stop()
-
-                # 1) Recherche des profils
-                log_area_face.info("🔍 Recherche des profils LinkedIn…")
-                progress_bar_face.progress(10, text="Recherche des profils…")
-                try:
-                    face_profiles = search_linkedin_profiles(
-                        company_or_school=company_face,
-                        search_type="image",
-                        search_value="",
-                        max_results=min(max_results, MAX_PROFILES_FOR_FACE_SEARCH),
-                    )
+                    results = face_idx.search(img_bytes, top_k=int(top_k))
                 except Exception as exc:
-                    st.error(f"Erreur lors de la recherche : {exc}")
-                    os.unlink(src_path)
-                    st.stop()
+                    st.error(f"Erreur : {exc}")
+                    results = []
 
-                if not face_profiles:
-                    st.info("Aucun profil trouvé pour cette entreprise/école.")
-                    os.unlink(src_path)
-                    st.stop()
-
-                st.info(f"📋 {len(face_profiles)} profil(s) à analyser…")
-
-                # 2) Scraping + comparaison faciale
-                face_results: list[dict] = []
-                for i, p in enumerate(face_profiles):
-                    pct = 10 + int(85 * (i + 1) / len(face_profiles))
-                    progress_bar_face.progress(
-                        pct, text=f"Analyse {i + 1}/{len(face_profiles)}…"
-                    )
-                    log_area_face.info(
-                        f"🔄 Scraping : {p.get('name', p['url'])}"
-                    )
-
-                    try:
-                        detail = scrape_linkedin_profile(p["url"], download_photo=True)
-                    except Exception:
-                        detail = {**p, "photo_locale": "", "photo_profil_url": ""}
-
-                    face_cmp: dict = {
-                        "match": False,
-                        "confidence": 0.0,
-                        "error": "Pas de photo",
-                    }
-
-                    if detail.get("photo_locale"):
-                        face_cmp = comparator.compare_with_image(
-                            detail["photo_locale"]
-                        )
-                    elif detail.get("photo_profil_url"):
-                        try:
-                            resp = Fetcher.get(
-                                detail["photo_profil_url"], stealthy_headers=True
-                            )
-                            if hasattr(resp, "content") and resp.content:
-                                face_cmp = comparator.compare_with_bytes(resp.content)
-                        except Exception as exc:
-                            face_cmp["error"] = str(exc)
-
-                    face_results.append({**detail, "face": face_cmp})
-
-                os.unlink(src_path)
-                progress_bar_face.progress(100, text="Terminé")
-                log_area_face.empty()
-
-                # 3) Résultats triés (meilleures correspondances en premier)
-                face_results.sort(
-                    key=lambda r: r["face"].get("confidence", 0.0), reverse=True
-                )
-
-                matches = [r for r in face_results if r["face"].get("match")]
+            if not results:
+                st.warning("Aucun visage détecté dans la photo ou index vide.")
+            else:
+                matches = [r for r in results if r.match]
                 if matches:
-                    st.success(f"✅ {len(matches)} correspondance(s) trouvée(s) !")
+                    st.success(f"🎯 {len(matches)} correspondance(s) trouvée(s) !")
                 else:
-                    st.warning(
-                        "Aucune correspondance exacte. Résultats triés par proximité :"
-                    )
+                    st.info("Aucune correspondance exacte — profils les plus proches :")
 
-                for r in face_results:
-                    _render_profile_card(r, face_result=r["face"])
+        # ── Cartes résultats ──────────────────────────────────────────────────
+        st.markdown('<div class="sec" style="font-size:1rem">Résultats</div>', unsafe_allow_html=True)
+
+        for r in results:
+            p    = r.profile
+            cls  = "card ok" if r.match else "card"
+            nom  = p.get("nom", "—") or "—"
+            titre = p.get("titre", "") or ""
+            url  = p.get("url", "#")
+            conf = f"{r.confidence*100:.0f}%"
+            dist = f"{r.distance:.3f}"
+
+            # Miniature
+            thumb_html = ""
+            if r.photo_path and os.path.isfile(r.photo_path):
+                import base64
+                with open(r.photo_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode()
+                thumb_html = f'<img src="data:image/jpeg;base64,{b64}" />'
+            else:
+                thumb_html = "<div style='width:52px;height:52px;border-radius:50%;background:#334155;display:flex;align-items:center;justify-content:center;font-size:1.4rem'>👤</div>"
+
+            badge = "🟢" if r.match else "🔵"
+            st.markdown(
+                f'<div class="{cls}">'
+                f'  {thumb_html}'
+                f'  <div class="info" style="flex:1">'
+                f'    <div class="nm">{badge} {nom}</div>'
+                f'    <div class="ti">{titre}</div>'
+                f'    <div class="url"><a href="{url}" target="_blank">Voir le profil LinkedIn →</a></div>'
+                f'  </div>'
+                f'  <div style="text-align:right">'
+                f'    <div style="font-size:1.3rem;font-weight:700;color:{"#4ade80" if r.match else "#60a5fa"}">{conf}</div>'
+                f'    <div style="font-size:.72rem;color:#64748b">dist {dist}</div>'
+                f'  </div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    elif uploaded and not face_idx:
+        st.warning("Chargez d'abord un index facial valide.")

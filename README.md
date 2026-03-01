@@ -68,15 +68,18 @@ De-duplication strategy:
 
 ```text
 .
+├── app.py                             # Streamlit UI (next steps: UI/UX + face recognition)
 ├── core/
 │   ├── alumni_osint_pipeline.py      # Phase 1 engine + HD URL hack
-│   ├── linkedin_scraper.py           # Existing resilient scraping primitives
-│   └── ...
+│   ├── linkedin_scraper.py           # Resilient scraping primitives
+│   ├── face_index.py                 # Face indexing (Phase 2)
+│   └── face_comparator.py            # Face comparison utilities
 ├── data/                             # Pipeline artifacts/log-ready folder
 ├── high_res_images/                  # Saved images: FirstName_LastName.jpg
 ├── profiles_metadata.json            # Structured dataset metadata
 ├── run_phase1_pipeline.py            # CLI entrypoint for Phase 1
-└── requirements.txt
+├── requirements-phase1.txt           # Minimal deps for Phase 1 only
+└── requirements.txt                  # Full deps (UI + future phases)
 ```
 
 ---
@@ -92,8 +95,21 @@ De-duplication strategy:
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
-pip install -r requirements.txt
+pip install -r requirements-phase1.txt
 ```
+
+### Low disk space fix (`/tmp` full)
+
+If `pip` fails with `OSError: [Errno 28] No space left on device`, use a temp folder on your home partition:
+
+```bash
+mkdir -p ~/tmp/pip
+export TMPDIR=~/tmp/pip
+pip install -r requirements-phase1.txt
+```
+
+> `requirements.txt` includes extra dependencies for UI and later phases (e.g. Streamlit / face stack).
+> For Phase 1 pipeline only, use `requirements-phase1.txt`.
 
 ---
 
@@ -104,7 +120,12 @@ pip install -r requirements.txt
 export LI_AT='your_linkedin_li_at_cookie'
 ```
 
-### 2) Run Phase 1 pipeline
+### 2) Install Phase 1 dependencies
+```bash
+pip install -r requirements-phase1.txt
+```
+
+### 3) Run Phase 1 pipeline
 ```bash
 python run_phase1_pipeline.py \
   --entity-url "https://www.linkedin.com/school/ensam-casablanca/" \

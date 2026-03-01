@@ -305,10 +305,35 @@ class AlumniOSINTPipeline:
             timeout=30,
             follow_redirects=True,
             limits=httpx.Limits(max_connections=12, max_keepalive_connections=8),
-            headers={"Referer": "https://www.linkedin.com/"},
+            headers={
+                "Referer": "https://www.linkedin.com/",
+                "Origin": "https://www.linkedin.com",
+                "User-Agent": (
+                    "Mozilla/5.0 (X11; Linux x86_64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Cookie": f"li_at={self.li_at}",
+            },
         ) as client:
             tasks = [self._download_single_image(client, sem, profile, idx) for idx, profile in enumerate(profiles)]
             await asyncio.gather(*tasks)
+
+    def _hd_candidates(self, source_url: str) -> list[str]:
+        if not source_url:
+            return []
+        candidates = [
+            make_high_res_image_url(source_url, self.high_res_size),
+            make_high_res_image_url(source_url, 1200),
+            make_high_res_image_url(source_url, 800),
+            make_high_res_image_url(source_url, 600),
+            source_url,
+        ]
+        uniq: list[str] = []
+        for url in candidates:
+            if url and url not in uniq:
+                uniq.append(url)
+        return uniq
 
     async def _download_single_image(
         self,
@@ -321,8 +346,8 @@ class AlumniOSINTPipeline:
             profile.error = "No public image URL"
             return
 
-        high_res = make_high_res_image_url(profile.source_image_url, self.high_res_size)
-        profile.high_res_image_url = high_res
+        hd_candidates = self._hd_candidates(profile.source_image_url)
+        profile.high_res_image_url = hd_candidates[0] if hd_candidates else ""
 
         base = normalize_name_for_filename(profile.name)
         if base == "unknown_profile":
@@ -338,19 +363,23 @@ class AlumniOSINTPipeline:
             suffix += 1
 
         async with sem:
-            try:
-                response = await client.get(high_res)
-                if response.status_code == 200 and len(response.content) > 700:
-                    with open(target, "wb") as file:
-                        file.write(response.content)
-                    profile.image_downloaded = True
-                    profile.image_filename = filename
-                    profile.image_path = target
-                    profile.error = ""
-                else:
-                    profile.error = f"HTTP {response.status_code}"
-            except Exception as exc:
-                profile.error = str(exc)[:120]
+            last_error = ""
+            for candidate_url in hd_candidates:
+                try:
+                    response = await client.get(candidate_url)
+                    if response.status_code == 200 and len(response.content) > 700:
+                        with open(target, "wb") as file:
+                            file.write(response.content)
+                        profile.image_downloaded = True
+                        profile.image_filename = filename
+                        profile.image_path = target
+                        profile.high_res_image_url = candidate_url
+                        profile.error = ""
+                        return
+                    last_error = f"HTTP {response.status_code}"
+                except Exception as exc:
+                    last_error = str(exc)[:120]
+            profile.error = last_error or "Failed to download HD image"
 
     def _save_metadata(self, profiles: list[AlumniProfile]) -> None:
         payload = {
