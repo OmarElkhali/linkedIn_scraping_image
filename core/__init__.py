@@ -1,17 +1,15 @@
 """
-LinkedIn Scraper — package principal.
-
-Expose les composants publics du package pour des imports simplifiés :
-
-    from core import FaceComparator, search_linkedin_profiles, scrape_linkedin_profile
+Package core — LinkedIn Photo Scraper.
+Expose les composants publics.
 """
-
-from core.face_comparator import FaceComparator, FACE_RECOGNITION_AVAILABLE
-from core.scraper import search_linkedin_profiles, scrape_linkedin_profile
+from core.linkedin_scraper import LinkedInScraper
+from core.face_index import FaceIndex, FACE_RECOGNITION_AVAILABLE
+from core.alumni_osint_pipeline import AlumniOSINTPipeline, make_high_res_image_url
 
 __all__ = [
-    "FaceComparator",
+    "LinkedInScraper",
+    "FaceIndex",
     "FACE_RECOGNITION_AVAILABLE",
-    "search_linkedin_profiles",
-    "scrape_linkedin_profile",
+    "AlumniOSINTPipeline",
+    "make_high_res_image_url",
 ]

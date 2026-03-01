@@ -1,147 +1,166 @@
-# LinkedIn Scraper 🔍
+# Alumni OSINT Recon Pipeline
 
-Application Python / Streamlit permettant de **rechercher et analyser des profils LinkedIn** par nom, profession ou reconnaissance faciale.
+An **Automated OSINT Data & Biometric Collection Framework** for building structured alumni/professional datasets from LinkedIn school/company pages.
+
+> **Phase 1 (current scope):** resilient profile scraping + HD image dataset generation.  
+> **Not included in Phase 1:** facial recognition or AI identity matching.
+
+## Project Status
+
+✅ **This repository currently publishes Phase 1.**
+
+The project is intentionally designed as a multi-phase framework:
+- **Phase 1 (Live):** resilient scraping, data normalization, high-res image collection, metadata dataset.
+- **Phase 2 (Planned):** biometric indexing and controlled face similarity search.
+- **Phase 3 (Planned):** intelligence enrichment, scoring, analytics dashboards, and API automation.
 
 ---
 
-## Fonctionnalités
+## Why this project
 
-| Mode | Description |
-|------|-------------|
-| 👤 **Nom / Prénom** | Recherche un profil par nom complet au sein d'une entreprise ou école. |
-| 💼 **Profession** | Recherche des profils par intitulé de poste au sein d'une entreprise ou école. |
-| 📷 **Reconnaissance faciale** | Télécharge une photo de référence et parcourt les profils LinkedIn pour identifier la personne. |
+This repository provides a production-oriented data collection pipeline designed for:
+- University alumni reconnaissance (e.g., ENSAM Casablanca)
+- Corporate talent landscape mapping
+- Local dataset creation for future biometric/R&D phases
+
+The pipeline focuses on reliability, metadata quality, and reproducible output structure suitable for open-source collaboration.
 
 ---
 
-## Architecture
+## Phase 1 Features
 
-```
-linkedIn_scraping_image/
-├── app.py                  # Interface Streamlit (point d'entrée)
-├── requirements.txt        # Dépendances Python
-└── core/
-    ├── __init__.py         # Exports du package
-    ├── config.py           # Constantes et variables d'environnement
-    ├── scraper.py          # Scraping LinkedIn via Google + Scrapling
-    └── face_comparator.py  # Reconnaissance faciale (dlib / face_recognition)
+### 1) Resilient scraping engine (Patchright/Playwright)
+- Session-based browsing using `li_at` cookie
+- Infinite scroll handling
+- "Show more" interaction support
+- Voyager API interception + DOM fallback extraction
+- Anti-fragile behavior for partial API failures
+
+### 2) **High-Res Image Hack** (critical)
+Before any download, image URLs are upgraded using dynamic URL token replacement:
+- `shrink_100_100` → `shrink_800_800`
+- `shrink_200_200` → `shrink_800_800`
+- `scale_100_100`  → `scale_800_800`
+
+Implemented in: `core/alumni_osint_pipeline.py` (`make_high_res_image_url`).
+
+### 3) Data normalization and de-duplication
+Extracted fields:
+- `name`
+- `headline`
+- `profile_url`
+- `source_image_url`
+- `high_res_image_url`
+
+De-duplication strategy:
+- Profile-level dedupe by canonical profile URL
+- File-level dedupe to prevent overwriting existing images
+- Filename normalization (`FirstName_LastName.jpg`)
+
+### 4) Production-oriented artifact output
+- Clean high-resolution image folder
+- Structured metadata JSON linked to exact image filenames
+- Coverage stats (profiles collected vs images downloaded)
+
+---
+
+## Project Architecture
+
+```text
+.
+├── core/
+│   ├── alumni_osint_pipeline.py      # Phase 1 engine + HD URL hack
+│   ├── linkedin_scraper.py           # Existing resilient scraping primitives
+│   └── ...
+├── data/                             # Pipeline artifacts/log-ready folder
+├── high_res_images/                  # Saved images: FirstName_LastName.jpg
+├── profiles_metadata.json            # Structured dataset metadata
+├── run_phase1_pipeline.py            # CLI entrypoint for Phase 1
+└── requirements.txt
 ```
 
 ---
 
 ## Installation
 
-### Prérequis système
-
+### Prerequisites
 - Python 3.11+
-- Pour la reconnaissance faciale : `cmake` et les outils de compilation C++
+- Chromium-compatible environment
+- Linux/macOS recommended
 
 ```bash
-# Ubuntu / Debian
-sudo apt-get install cmake build-essential
-
-# macOS (Homebrew)
-brew install cmake
-```
-
-### Installation des dépendances Python
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
 pip install -r requirements.txt
 ```
 
-> **Note** : `face_recognition` est optionnel. Si la bibliothèque n'est pas installée, les onglets *Nom* et *Profession* restent fonctionnels.
-
 ---
 
-## Lancement
+## Quick Start
 
+### 1) Export session cookie
 ```bash
-streamlit run app.py
+export LI_AT='your_linkedin_li_at_cookie'
 ```
 
-L'application s'ouvre automatiquement sur `http://localhost:8501`.
-
----
-
-## Configuration
-
-Les paramètres peuvent être ajustés via des **variables d'environnement** ou directement dans `core/config.py` :
-
-| Variable | Valeur par défaut | Description |
-|----------|-------------------|-------------|
-| `OUTPUT_DIR` | `output` | Dossier de sortie principal |
-| `FACE_MATCH_TOLERANCE` | `0.55` | Seuil de distance faciale (0 = identique, 1 = différent) |
-| `MAX_PROFILES_FOR_FACE_SEARCH` | `20` | Nombre max de profils analysés en mode visage |
-| `REQUEST_DELAY` | `1.5` | Délai (s) entre deux requêtes pour éviter le rate-limiting |
-
-Exemple :
-
+### 2) Run Phase 1 pipeline
 ```bash
-FACE_MATCH_TOLERANCE=0.50 REQUEST_DELAY=2.0 streamlit run app.py
+python run_phase1_pipeline.py \
+  --entity-url "https://www.linkedin.com/school/ensam-casablanca/" \
+  --max-profiles 5000 \
+  --max-stale-rounds 3 \
+  --high-res-size 800 \
+  --data-dir data \
+  --images-dir high_res_images \
+  --metadata-file profiles_metadata.json
 ```
 
 ---
 
-## Utilisation de l'interface
+## Output Schema (`profiles_metadata.json`)
 
-### Onglet « Recherche par Nom »
+Each profile entry contains dataset-ready metadata:
 
-1. Saisissez le nom de l'**entreprise ou école**.
-2. Saisissez le **nom / prénom** de la personne.
-3. Cliquez sur **Rechercher**.
-4. Les profils LinkedIn correspondants s'affichent sous forme de cartes cliquables.
-
-### Onglet « Recherche par Profession »
-
-1. Saisissez le nom de l'**entreprise ou école**.
-2. Saisissez l'**intitulé de poste** (ex. *Data Scientist*, *Product Manager*).
-3. Cliquez sur **Rechercher**.
-
-### Onglet « Recherche par Visage »
-
-1. Saisissez le nom de l'**entreprise ou école**.
-2. Téléchargez une **photo de référence** claire (JPEG, PNG, WebP).
-3. Cliquez sur **Rechercher et comparer**.
-4. L'application scrape les profils, télécharge les photos et les compare à l'image de référence.
-5. Les résultats sont triés par **score de confiance** (du plus probable au moins probable).
-
-### Paramètres de la barre latérale
-
-- **Nombre max de résultats** : nombre de profils Google à analyser.
-- **Tolérance** : seuil de distance faciale. Diminuez la valeur pour une comparaison plus stricte.
-
----
-
-## Utilisation programmatique
-
-```python
-from core.scraper import search_linkedin_profiles, scrape_linkedin_profile
-from core.face_comparator import FaceComparator
-
-# Recherche par nom
-profiles = search_linkedin_profiles(
-    company_or_school="Google",
-    search_type="nom_prenom",
-    search_value="John Doe",
-    max_results=5,
-)
-
-# Scraping détaillé d'un profil
-detail = scrape_linkedin_profile(profiles[0]["url"], download_photo=True)
-print(detail["nom_complet"], detail["titre_professionnel"])
-
-# Reconnaissance faciale
-comparator = FaceComparator("reference.jpg", tolerance=0.50)
-result = comparator.compare_with_image("target.jpg")
-print(result)
-# {'match': True, 'distance': 0.38, 'confidence': 62.0, 'faces_found': 1, 'error': None}
+```json
+{
+  "name": "Jane Doe",
+  "headline": "Data Engineer",
+  "profile_url": "https://www.linkedin.com/in/jane-doe",
+  "source_image_url": "https://...shrink_100_100...",
+  "high_res_image_url": "https://...shrink_800_800...",
+  "image_filename": "Jane_Doe.jpg",
+  "image_path": "high_res_images/Jane_Doe.jpg",
+  "image_downloaded": true,
+  "error": "",
+  "scraped_at": "2026-03-01T12:00:00Z"
+}
 ```
 
 ---
 
-## Avertissement légal
+## Security & Compliance
 
-Ce projet est fourni à des **fins éducatives uniquement**.  
-Le scraping de LinkedIn peut violer les [Conditions d'utilisation de LinkedIn](https://www.linkedin.com/legal/user-agreement).  
-Utilisez cet outil de manière responsable et en conformité avec les lois applicables.
+- Never commit `li_at` cookies or personal secrets.
+- Use environment variables (`LI_AT`) or local runtime arguments only.
+- Ensure your usage complies with:
+  - LinkedIn Terms of Service
+  - Local privacy and data protection regulations
+  - Institutional research ethics policies
+
+This repository is intended for educational/research and lawful OSINT workflows.
+
+---
+
+## Roadmap (post-Phase 1)
+
+- Phase 2: biometric indexing and similarity retrieval (opt-in, compliant)
+- Dataset quality scoring and validation reports
+- Containerized execution (`Dockerfile`, `compose`)
+- CI checks (lint/test/secret scanning)
+
+---
+
+## Disclaimer
+
+This project provides technical tooling. Users are solely responsible for lawful, ethical, and policy-compliant use.
